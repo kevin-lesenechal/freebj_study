@@ -1,0 +1,33 @@
+{
+  "rounds": 100000000,
+  "rules": {
+    "game_type": "ahc",
+    "soft17": "h17",
+    "das": false,
+    "double_down": "any_two",
+    "surrender": "no_surrender",
+    "play_ace_pairs": false,
+    "max_splits": 4,
+    "decks": 6,
+    "penetration_cards": 46
+  },
+  "ev": -0.11253256000000052,
+  "stddev": 0.9408154929587288,
+  "winning_distrib": {
+    "-1.0": 50516496,
+    "+0.0": 10220264,
+    "+1.0": 39263240
+  },
+  "hands": {
+    "total": 100000000,
+    "won": 39263240,
+    "lost": 50516496,
+    "push": 10220264,
+    "busted": 36434107,
+    "blackjack": 0,
+    "doubled": 0,
+    "split": 0,
+    "insured": 0,
+    "surrender": 0
+  }
+}
