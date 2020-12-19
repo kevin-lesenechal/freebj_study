@@ -8,13 +8,18 @@ require 'freebj'
 
 opts = GetoptLong.new(
   ["--freebj-bin",  "-b", GetoptLong::REQUIRED_ARGUMENT],
-  ["--help",        "-h", GetoptLong::NO_ARGUMENT],
+  [                 "-o", GetoptLong::REQUIRED_ARGUMENT],
+  ["--db-dir",            GetoptLong::REQUIRED_ARGUMENT],
+  ["--tc",                GetoptLong::REQUIRED_ARGUMENT],
+  ["--no-save",           GetoptLong::NO_ARGUMENT],
   ["--holecarding",       GetoptLong::NO_ARGUMENT],
+  ["--help",        "-h", GetoptLong::NO_ARGUMENT],
 )
 
 $options = {
   actions: nil,
   devs: nil,
+  force_tc: false,
   tc_min: 0,
   tc_max: 0,
   holecarding: false,
@@ -22,6 +27,8 @@ $options = {
 
 bin = "freebj"
 bin_args = []
+$db_dir = "data/simulations"
+out_file = nil
 
 def usage
   STDERR.puts "Usage: #{$0} [OPTION...]\n"
@@ -32,26 +39,50 @@ opts.each do |opt, arg|
     when "--freebj-bin"
       bin = arg
 
-    when "--help"
-      usage
-      exit 0
+    when "-o"
+      out_file = arg
+
+    when "--db-dir"
+      $db_dir = arg
+
+    when "--tc"
+      tcs = arg.split("/").map{|n| Integer(n)}
+      raise "--tc: invalid parameter" if tcs.size != 2 || tcs[0] > tcs[1]
+      $options[:force_tc] = true
+      $options[:tc_min] = tcs[0]
+      $options[:tc_max] = tcs[1]
+
+    when "--no-save"
+      $db_dir = nil
 
     when "--holecarding"
       $options[:holecarding] = true
+
+    when "--help"
+      usage
+      exit 0
   end
 end
 
+raise "-o is required" if out_file.nil?
+
 bin_args = ARGV
-#18/4
+
 $freebj = FreeBJ.new(bin, bin_args)
-dry_run = $freebj.get_dry_run()
-json = {
-  rounds: dry_run["rounds"],
-  rules: dry_run["rules"],
-  hard_hands: {},
-  soft_hands: {},
-  pairs: {}
-}
+$freebj.db_dir = $db_dir
+
+if File.exists? out_file
+  json = JSON.parse(File.read(out_file))
+else
+  dry_run = $freebj.get_dry_run()
+  json = {
+    "rounds" => dry_run["rounds"],
+    "rules" => dry_run["rules"],
+    "hard_hands" => {},
+    "soft_hands" => {},
+    "pairs" => {}
+  }
+end
 
 def to_test(label, dealer)
   return true
@@ -61,35 +92,58 @@ def do_test_cell(player, dealer)
   best_ev = nil
   best_action = nil
   out = {}
+  pending_ids = []
 
-  $options[:tc_min].upto($options[:tc_max]).each do |tc|
-    out[tc] = {}
+  begin
+    $options[:tc_min].upto($options[:tc_max]).each do |tc|
+      out[tc] = {}
 
-    %w(+ = D V #).each do |action|
-      STDERR.printf "\e[90m%+d%s\e[0m", tc, action
+      %w(+ = D V #).each do |action|
+        STDERR.printf "\e[90m%+d%s\e[0m", tc, action
 
-      raise "TC != 0 not implemented" if tc != 0
+        args = [
+          "-a", action,
+          "-c", player.join(","),
+          "--dealer", dealer.join(",")
+        ]
 
-      res = $freebj.run([
-        "-a", action,
-        "-c", player.join(","),
-        "--dealer", dealer.join(",")
-      ])
-
-      if res != :unable
-        out[tc][action] = {"ev": res["ev"], "stddev": res["stddev"]}
-        if tc == 0 and (best_ev.nil? or res["ev"] > best_ev)
-          best_ev = res["ev"]
-          best_action = action
+        if $options[:force_tc]
+          args += ["--force-tc=#{tc}"]
         end
-      end
-      STDERR.print ("\e[D" * 3)
-    end
 
-    out[tc] = out[tc].collect{|a| {action: a[0], **a[1]}}.sort_by{|a| a[:ev]}.reverse
+        res = $freebj.run(args)
+        if res != :unable and !$freebj.last_saved_id.nil?
+          pending_ids << $freebj.last_saved_id
+        end
+
+        if res != :unable
+          out[tc][action] = {
+            "ev": res["ev"],
+            "stddev": res["stddev"],
+            "ref": $freebj.last_saved_id
+          }
+          if tc == 0 and (best_ev.nil? or res["ev"] > best_ev)
+            best_ev = res["ev"]
+            best_action = action
+          end
+        end
+        STDERR.print ("\e[D" * 3)
+      end
+
+      out[tc] = out[tc].collect{|a| {"action" => a[0], **a[1]}}.sort_by{|a| a["ev"]}.reverse
+    end
+  rescue Exception
+    pending_ids.each do |id|
+      file = $db_dir + "/" + id[0..1] + "/" + id + ".json"
+      begin
+        File.delete file
+      rescue Exception
+      end
+    end
+    raise
   end
 
-  out = out.collect{|x| {tc: x[0].to_s.to_i, actions: x[1]}}
+  out = out.collect{|x| {"tc" => x[0].to_s.to_i, "actions" => x[1]}}
 
   case best_action
     when "+"; STDERR.print "\e[32m"
@@ -104,7 +158,10 @@ end
 
 def do_test_line(row_label, player, out)
   STDERR.printf "\e[97m%3s │\e[0m", row_label
-  out[row_label] = {}
+
+  if !out.has_key? row_label
+    out[row_label] = {}
+  end
 
   if $options[:holecarding]
     dealer_cards = [[2, 2], [2, 3], [2, 4], [2, 5], [2, 6], [2, 7], [2, 8],
@@ -135,7 +192,11 @@ def do_test_line(row_label, player, out)
       next
     end
 
-    out[row_label][dcard_label] = do_test_cell(player, dcards)
+    if out[row_label].has_key?(dcard_label)
+      print " \e[90m* "
+    else
+      out[row_label][dcard_label] = do_test_cell(player, dcards)
+    end
   end
 
   out.delete(row_label) if out[row_label].empty?
@@ -155,7 +216,7 @@ begin
 
   begin
     each_hard_hand(8) do |label, player|
-      do_test_line(label, player, json[:hard_hands])
+      do_test_line(label, player, json["hard_hands"])
     end
   rescue Interrupt
     if $options[:holecarding]
@@ -181,7 +242,7 @@ begin
 
   begin
     each_soft_hand do |label, player|
-      do_test_line(label, player, json[:soft_hands])
+      do_test_line(label, player, json["soft_hands"])
     end
   rescue Interrupt
     if $options[:holecarding]
@@ -207,7 +268,7 @@ begin
 
   begin
     each_pair do |label, player|
-      do_test_line(label, player, json[:pairs])
+      do_test_line(label, player, json["pairs"])
     end
   rescue Interrupt
     STDERR.print "\n"
@@ -222,5 +283,5 @@ begin
   end
 rescue Interrupt
 ensure
-  puts JSON.pretty_generate(json)
+  File.write(out_file, JSON.pretty_generate(json))
 end

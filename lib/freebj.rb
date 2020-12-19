@@ -21,6 +21,7 @@ class FreeBJ
       if not t.value.success?
         STDERR.puts "Error launching #{command_argv(args)}:"
         STDERR.puts stderr.read
+        STDERR.puts "Args: #{command_argv(args).join(" ")}"
         raise "Failed to launch freebj simulator"
       end
 
@@ -36,6 +37,7 @@ class FreeBJ
       if not t.value.success?
         STDERR.puts "Error launching #{cmd}:"
         STDERR.puts stderr.read
+        STDERR.puts "Args: #{cmd.join(" ")}"
         raise "Failed to launch freebj simulator"
       end
       return JSON.parse(stdout.read)
@@ -101,6 +103,27 @@ def each_pair()
   end
 end
 
+def cards_from_str(str)
+  if m = str.match(/(\d|T|A)\/\1/)
+    c = m[1] == "A" ? "A" : (m[1] == "T" ? 10 : m[1].to_i)
+    return [c, c]
+  elsif m = str.match(/A(\d+)/)
+    c = m[1] == "A" ? "A" : m[1].to_i
+    return ["A", c]
+  else
+    n = str.to_i
+    if n >= 18
+      return [10, n - 10]
+    elsif n >= 14
+      return [9, n - 9]
+    elsif n >= 9
+      return [7, n - 7]
+    else
+      return [2, n - 2]
+    end
+  end
+end
+
 def rules_to_str(rules)
   surr = {
     "early" => "ESurr",
@@ -127,4 +150,53 @@ def rules_to_str(rules)
     rules["bj_pays"],
     rules["penetration"]
   )
+end
+
+def rules_to_args(rules, exclude_pen: false)
+  args = []
+
+  if rules["game_type"] == "ahc"
+    args << "--ahc"
+  elsif rules["game_type"] == "enhc"
+    args << "--enhc"
+  end
+
+  if rules["soft17"] == "s17"
+    args << "--s17"
+  elsif rules["soft17"] == "h17"
+    args << "--h17"
+  end
+
+  if rules["das"]
+    args << "--das"
+  else
+    args << "--no-das"
+  end
+
+  case rules["double_down"]
+  when "no_double"; args << "--db-none"
+  when "any"; args << "--db-any"
+  when "any_two"; args << "--db-any2"
+  when "hard_9_to_10"; args << "--db-hard-9-11"
+  when "hard_10_to_11"; args << "--db-hard-10-11"
+  end
+
+  case rules["surrender"]
+  when "no_surrender"; args << "--no-surr"
+  when "early_surrender"; args << "--esurr"
+  when "late_surrender"; args << "--lsurr"
+  end
+
+  args << "-d#{rules["decks"]}"
+  args << "--max-splits=#{rules["max_splits"]}"
+
+  args << "-p#{rules["penetration_cards"]}" if !exclude_pen
+
+  if rules["play_ace_pairs"]
+    args << "--playAA"
+  else
+    args << "--no-playAA"
+  end
+
+  args
 end
