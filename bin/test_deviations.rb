@@ -89,10 +89,9 @@ begin
       next
     end
 
-    without = $freebj.run(args + ["--hilo", "-c", cards, "--dealer=#{dealer}"])
+    without = $freebj.run(args + ["--hilo"])
     without_ref = $freebj.last_saved_id
-    with = $freebj.run(args + ["--hilo", "-c", cards, "--dealer=#{dealer}",
-                              "-D", override])
+    with = $freebj.run(args + ["--hilo", "-D", override])
     with_ref = $freebj.last_saved_id
 
     without = {
@@ -119,5 +118,3 @@ begin
 ensure
   File.write(dev_file, JSON.pretty_generate(json))
 end
-
-#p $freebj.run(args)
